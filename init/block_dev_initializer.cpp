@@ -97,20 +97,28 @@ bool BlockDevInitializer::InitDevices(std::set<std::string> devices) {
 
     // UeventCallback() will remove found partitions from |devices|. So if it
     // isn't empty here, it means some partitions are not found.
+    // let it through for flexible internal/sdcard boot
+    if (!devices.empty()) {
+        LOG(INFO) << __PRETTY_FUNCTION__
+              << ": partition(s) not found in /sys, not waiting for them: "
+              << android::base::Join(devices, ", ");
+    }
+    /*
     if (!devices.empty()) {
         LOG(INFO) << __PRETTY_FUNCTION__
                   << ": partition(s) not found in /sys, waiting for their uevent(s): "
                   << android::base::Join(devices, ", ");
         Timer t;
+
         uevent_listener_.Poll(uevent_callback, 10s);
         LOG(INFO) << "Wait for partitions returned after " << t;
     }
-
     if (!devices.empty()) {
         LOG(ERROR) << __PRETTY_FUNCTION__ << ": partition(s) not found after polling timeout: "
                    << android::base::Join(devices, ", ");
         return false;
     }
+    */
     return true;
 }
 
