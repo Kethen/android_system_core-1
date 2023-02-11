@@ -400,7 +400,9 @@ std::string ReadFstabFromDt() {
         }
         fstab_entry.push_back(value);
         // Adds a fstab_entry to fstab_dt_entries, to be sorted by mount_point later.
-        fstab_dt_entries.emplace_back(mount_point, android::base::Join(fstab_entry, " "));
+        //fstab_dt_entries.emplace_back(mount_point, android::base::Join(fstab_entry, " "));
+        // sort by dir name instead so that mount order can be specified
+        fstab_dt_entries.emplace_back(std::string(dp->d_name), android::base::Join(fstab_entry, " "));
     }
 
     // Sort fstab_dt entries, to ensure /vendor is mounted before /vendor/abc is attempted.

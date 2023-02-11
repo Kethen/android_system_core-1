@@ -92,7 +92,8 @@ class FirstStageMount {
     bool InitRequiredDevices(std::set<std::string> devices);
     bool CreateLogicalPartitions();
     bool CreateSnapshotPartitions(android::snapshot::SnapshotManager* sm);
-    bool MountPartition(const Fstab::iterator& begin, bool erase_same_mounts,
+    //bool MountPartition(const Fstab::iterator& begin, bool erase_same_mounts,
+    bool MountPartition(const Fstab::iterator& begin, bool erase_same_mounts, bool try_same_mounts,
                         Fstab::iterator* end = nullptr);
 
     bool MountPartitions();
@@ -259,7 +260,8 @@ bool FirstStageMount::DoCreateDevices() {
         return entry.mount_point == "/metadata";
     });
     if (metadata_partition != fstab_.end()) {
-        if (MountPartition(metadata_partition, true /* erase_same_mounts */)) {
+        //if (MountPartition(metadata_partition, true /* erase_same_mounts */)) {
+        if (MountPartition(metadata_partition, true /* erase_same_mounts */, true)) {
             // Copies DSU AVB keys from the ramdisk to /metadata.
             // Must be done before the following TrySwitchSystemAsRoot().
             // Otherwise, ramdisk will be inaccessible after switching root.
@@ -413,7 +415,8 @@ bool FirstStageMount::CreateSnapshotPartitions(SnapshotManager* sm) {
     return true;
 }
 
-bool FirstStageMount::MountPartition(const Fstab::iterator& begin, bool erase_same_mounts,
+//bool FirstStageMount::MountPartition(const Fstab::iterator& begin, bool erase_same_mounts,
+bool FirstStageMount::MountPartition(const Fstab::iterator& begin, bool erase_same_mounts, bool try_same_mounts,
                                      Fstab::iterator* end) {
     // Sets end to begin + 1, so we can just return on failure below.
     if (end) {
@@ -441,14 +444,16 @@ bool FirstStageMount::MountPartition(const Fstab::iterator& begin, bool erase_sa
 
     // Try other mounts with the same mount point.
     Fstab::iterator current = begin + 1;
-    for (; current != fstab_.end() && current->mount_point == begin->mount_point; current++) {
-        if (!mounted) {
-            // blk_device is already updated to /dev/dm-<N> by SetUpDmVerity() above.
-            // Copy it from the begin iterator.
-            current->blk_device = begin->blk_device;
-            mounted = (fs_mgr_do_mount_one(*current) == 0);
-        }
-    }
+    if (try_same_mounts) {
+	    for (; current != fstab_.end() && current->mount_point == begin->mount_point; current++) {
+	        if (!mounted) {
+	            // blk_device is already updated to /dev/dm-<N> by SetUpDmVerity() above.
+	            // Copy it from the begin iterator.
+	            current->blk_device = begin->blk_device;
+	            mounted = (fs_mgr_do_mount_one(*current) == 0);
+	        }
+	    }
+	}
     if (erase_same_mounts) {
         current = fstab_.erase(begin, current);
     }
@@ -510,6 +515,7 @@ bool FirstStageMount::TrySwitchSystemAsRoot() {
     // Preloading all AVB keys from the ramdisk before switching root to /system.
     PreloadAvbKeys();
 
+#if 0
     auto system_partition = std::find_if(fstab_.begin(), fstab_.end(), [](const auto& entry) {
         return entry.mount_point == "/system";
     });
@@ -530,6 +536,29 @@ bool FirstStageMount::TrySwitchSystemAsRoot() {
         PLOG(ERROR) << "Failed to mount /system";
         return false;
     }
+#else
+    // for flexible internal storage/sdcard boot, sort through all the /system mount points and mount them
+    bool mounted_system = false;
+    auto entry = fstab_.begin();
+    while(entry != fstab_.end()){
+        if(entry->mount_point == "/system"){
+            //if(MountPartition(entry, false /* erase_same_mounts */)){
+            if(MountPartition(entry, false /* erase_same_mounts */, false)){
+                if (dsu_not_on_userdata_ && fs_mgr_verity_is_check_at_most_once(*entry)) {
+                    LOG(ERROR) << "check_most_at_once forbidden on external media";
+                    return false;
+                }
+                mounted_system = true;
+            }
+        }
+        entry++;
+    }
+    if(!mounted_system){
+        PLOG(ERROR) << "Failed to mount /system";
+        return false;
+    }
+    SwitchRoot("/system");
+#endif
 
     return true;
 }
@@ -538,6 +567,11 @@ bool FirstStageMount::MountPartitions() {
     if (!TrySwitchSystemAsRoot()) return false;
 
     if (!SkipMountingPartitions(&fstab_, true /* verbose */)) return false;
+
+    for (auto current = fstab_.begin(); current != fstab_.end();) {
+    	LOG(INFO) << "fstab entry " << current->blk_device << " " << current->mount_point;
+    	current++;
+	}
 
     for (auto current = fstab_.begin(); current != fstab_.end();) {
         // We've already mounted /system above.
@@ -560,8 +594,9 @@ bool FirstStageMount::MountPartitions() {
             continue;
         }
 
-        Fstab::iterator end;
-        if (!MountPartition(current, false /* erase_same_mounts */, &end)) {
+        //Fstab::iterator end;
+        //if (!MountPartition(current, false /* erase_same_mounts */, &end)) {
+        if (!MountPartition(current, false /* erase_same_mounts */, false)) {
             if (current->fs_mgr_flags.no_fail) {
                 LOG(INFO) << "Failed to mount " << current->mount_point
                           << ", ignoring mount for no_fail partition";
@@ -573,7 +608,8 @@ bool FirstStageMount::MountPartitions() {
                 return false;
             }
         }
-        current = end;
+        //current = end;
+        current++;
     }
 
     for (const auto& entry : fstab_) {
